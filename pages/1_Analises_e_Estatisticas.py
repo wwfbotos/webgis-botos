@@ -168,16 +168,16 @@ with st.sidebar:
     </div>""", unsafe_allow_html=True)
 
 # ── CARREGA DADOS DO LAGO SELECIONADO ─────────────────────────
-@st.cache_data(ttl=86400)  # 24h — dados do CSV nao mudam
+@st.cache_resource
 def load_serie(lago, nf, asset, cy, cm):
     # Hibrido: MOD11A2 para historico, MOD11A1 para mes atual
     return get_monthly_temperature_hybrid(lago, asset, ANO_BASE, cy, cm, nf)
 
-@st.cache_data(ttl=86400)  # 24h — dados do CSV nao mudam
+@st.cache_resource
 def load_stats(lago, nf, asset, sy, sm):
     return get_temp_stats(lago, asset, sy, sm, nf)
 
-@st.cache_data(ttl=86400)  # 24h — dados do CSV nao mudam
+@st.cache_resource
 def load_focos(lago, sy, sm, dyn):
     # CSV primeiro, GEE como fallback
     from utils.gee_loader import get_focos_from_csv
@@ -194,7 +194,7 @@ def load_focos(lago, sy, sm, dyn):
         if f10 is None: f10 = get_focos_count_periodo(lago, ASSETS["buffers"], 10000, sy, sm, dynamic=dyn, geom_src=geom_src)
     return f5, f10
 
-@st.cache_data(ttl=86400)  # 24h — comparativo do CSV nao muda
+@st.cache_resource
 def load_all_lakes(lagos, asset, ano_base, cy, cm, nf):
     return get_all_lakes_temp_acumulado(lagos, asset, ano_base, cy, cm, nf)
 
@@ -208,7 +208,7 @@ def load_diario(lago, nf, asset, cy, cm):
     # Temperatura diaria do mes atual (MOD11A1) — cache de 30min
     return get_daily_temperature_current_month(lago, asset, cy, cm, nf)
 
-@st.cache_data(ttl=86400)  # 24h — dados do CSV nao mudam
+@st.cache_resource
 def load_focos_serie(lago, cy, cm, dyn):
     geom_src = None
     if dyn:
