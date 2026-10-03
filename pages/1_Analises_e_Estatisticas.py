@@ -163,6 +163,52 @@ def pre_aquecer_cache(cy, cm):
 if 'cache_pre_aquecido' not in st.session_state:
     pre_aquecer_cache(current_year, current_month)
     st.session_state['cache_pre_aquecido'] = True
+
+# Alerta de temperatura em background — nao bloqueia o app
+def _disparar_alerta_background(secrets, current_year, current_month, current_day, MESES):
+    """Roda em thread separada — nao impacta velocidade do dashboard."""
+    import threading
+    def _verificar():
+        try:
+            from utils.gee_loader import get_csv_cache
+            from utils.alertas import verificar_e_enviar_alerta
+            import pandas as pd
+            df_cache = get_csv_cache()
+            if df_cache is None:
+                return
+            mes_ant = current_month - 1 if current_month > 1 else 12
+            ano_ant = current_year if current_month > 1 else current_year - 1
+            registros_cur, registros_ant = [], []
+            for lago_nome in df_cache['lago'].unique():
+                t_cur = df_cache[
+                    (df_cache['lago']==lago_nome) &
+                    (df_cache['ano']==current_year) &
+                    (df_cache['mes']==current_month)
+                ]['temperatura'].values
+                t_ant = df_cache[
+                    (df_cache['lago']==lago_nome) &
+                    (df_cache['ano']==ano_ant) &
+                    (df_cache['mes']==mes_ant)
+                ]['temperatura'].values
+                if len(t_cur) > 0 and t_cur[0]:
+                    registros_cur.append({'lago': lago_nome,
+                        'temperatura': float(t_cur[0]),
+                        'data': f'{current_day:02d}/{MESES[current_month-1]}/{current_year}'})
+                if len(t_ant) > 0 and t_ant[0]:
+                    registros_ant.append({'lago': lago_nome,
+                        'temperatura': float(t_ant[0]),
+                        'data': f'{mes_ant:02d}/{ano_ant}'})
+            if registros_cur and registros_ant:
+                verificar_e_enviar_alerta(
+                    secrets,
+                    pd.DataFrame(registros_cur),
+                    pd.DataFrame(registros_ant),
+                    limiar=0.5
+                )
+        except:
+            pass
+    t = threading.Thread(target=_verificar, daemon=True)
+    t.start()
 # ── HEADER ────────────────────────────────────────────────────
 logo_html = f'<img src="{LOGO_WWF}" style="height:48px;margin-right:14px">' if LOGO_WWF else ""
 # Header sera renderizado APOS carregar os dados do lago
@@ -258,6 +304,13 @@ with st.spinner("Carregando dados..."):
     df_f5, df_f10  = load_focos_serie(lago_sel, current_year, current_month, is_toc)
     df_diario     = load_diario(lago_sel, nf, asset, current_year, current_month)
     t_dia, data_dia = load_temp_dia(lago_sel, nf, asset)
+    # Dispara alerta em background — nao bloqueia
+    _chave = f'alerta_{current_year}_{current_month}_{current_day}'
+    if _chave not in st.session_state:
+        _disparar_alerta_background(
+            st.secrets, current_year, current_month, current_day, MESES)
+        st.session_state[_chave] = True
+
 
 # Renderiza header com data correta do lago selecionado
 _data_header = data_dia if data_dia else f"{current_day:02d}/{MESES[current_month-1]}/{current_year}"
