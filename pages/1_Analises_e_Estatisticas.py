@@ -127,6 +127,47 @@ def obter_display_map():
     return get_tocantins_display_names(ASSETS["tocantins"])
 
 current_year, current_month, current_day = obter_data()
+
+# Alerta automatico — roda uma vez por sessao ao abrir o app
+_chave_alerta = f'alerta_{current_year}_{current_month}_{current_day}'
+if _chave_alerta not in st.session_state:
+    try:
+        df_cache = get_csv_cache()
+        if df_cache is not None:
+            mes_ant = current_month - 1 if current_month > 1 else 12
+            ano_ant = current_year if current_month > 1 else current_year - 1
+            registros_cur, registros_ant = [], []
+            for lago_nome in df_cache['lago'].unique():
+                t_cur = df_cache[
+                    (df_cache['lago']==lago_nome) &
+                    (df_cache['ano']==current_year) &
+                    (df_cache['mes']==current_month)
+                ]['temperatura'].values
+                t_ant = df_cache[
+                    (df_cache['lago']==lago_nome) &
+                    (df_cache['ano']==ano_ant) &
+                    (df_cache['mes']==mes_ant)
+                ]['temperatura'].values
+                if len(t_cur) > 0 and t_cur[0]:
+                    registros_cur.append({'lago': lago_nome,
+                        'temperatura': float(t_cur[0]),
+                        'data': f'{current_day:02d}/{MESES[current_month-1]}/{current_year}'})
+                if len(t_ant) > 0 and t_ant[0]:
+                    registros_ant.append({'lago': lago_nome,
+                        'temperatura': float(t_ant[0]),
+                        'data': f'{mes_ant:02d}/{ano_ant}'})
+            if registros_cur and registros_ant:
+                enviado, _ = verificar_e_enviar_alerta(
+                    st.secrets,
+                    pd.DataFrame(registros_cur),
+                    pd.DataFrame(registros_ant),
+                    limiar=0.5
+                )
+                if enviado:
+                    st.toast('Alerta de temperatura enviado!', icon='📧')
+        st.session_state[_chave_alerta] = True
+    except:
+        st.session_state[_chave_alerta] = True
 MESES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
 
 tocantins_names   = obter_tocantins()
@@ -223,48 +264,6 @@ with st.spinner("Carregando dados..."):
     df_f5, df_f10  = load_focos_serie(lago_sel, current_year, current_month, is_toc)
     df_diario     = load_diario(lago_sel, nf, asset, current_year, current_month)
     t_dia, data_dia = load_temp_dia(lago_sel, nf, asset)
-    # Alerta automatico de temperatura
-    try:
-        chave = f'alerta_{current_year}_{current_month}_{current_day}'
-        if chave not in st.session_state and df_diario is not None and not df_diario.empty:
-            df_cache = get_csv_cache()
-            if df_cache is not None:
-                mes_ant = current_month - 1 if current_month > 1 else 12
-                ano_ant = current_year if current_month > 1 else current_year - 1
-                registros_cur, registros_ant = [], []
-                todos_lagos = list(df_cache['lago'].unique())
-                for lago_nome in todos_lagos:
-                    t_cur = df_cache[
-                        (df_cache['lago']==lago_nome) &
-                        (df_cache['ano']==current_year) &
-                        (df_cache['mes']==current_month)
-                    ]['temperatura'].values
-                    t_ant = df_cache[
-                        (df_cache['lago']==lago_nome) &
-                        (df_cache['ano']==ano_ant) &
-                        (df_cache['mes']==mes_ant)
-                    ]['temperatura'].values
-                    if len(t_cur) > 0 and t_cur[0]:
-                        registros_cur.append({'lago': lago_nome,
-                            'temperatura': t_cur[0],
-                            'data': f'{current_day:02d}/{MESES[current_month-1]}/{current_year}'})
-                    if len(t_ant) > 0 and t_ant[0]:
-                        registros_ant.append({'lago': lago_nome,
-                            'temperatura': t_ant[0],
-                            'data': f'{mes_ant:02d}/{ano_ant}'})
-                if registros_cur and registros_ant:
-                    enviado, msg_al = verificar_e_enviar_alerta(
-                        st.secrets,
-                        pd.DataFrame(registros_cur),
-                        pd.DataFrame(registros_ant),
-                        limiar=0.5
-                    )
-                    st.session_state[chave] = True
-                    if enviado:
-                        st.toast('Alerta de temperatura enviado!', icon='📧')
-    except Exception as e:
-        pass
-
 
 # Renderiza header com data correta do lago selecionado
 _data_header = data_dia if data_dia else f"{current_day:02d}/{MESES[current_month-1]}/{current_year}"
