@@ -225,7 +225,8 @@ def load_focos(lago, sy, sm, dyn):
 
 @st.cache_data(ttl=3600)
 def load_all_lakes(lagos, asset, ano_base, cy, cm, nf):
-    return get_all_lakes_temp_acumulado(lagos, asset, ano_base, cy, cm, nf)
+    # Aceita tuple (hasheavel para cache) e converte para lista
+    return get_all_lakes_temp_acumulado(list(lagos), asset, ano_base, cy, cm, nf)
 
 @st.cache_data(ttl=600)  # 10 min
 def load_temp_dia(lago, nf, asset):
@@ -416,7 +417,7 @@ with tab2:
         with st.spinner(f"Calculando {len(GRUPOS[grupo_sel])} lagos..."):
             prog.progress(30, text="Calculando temperaturas em batch...")
             df_todos_calc = load_all_lakes(
-                GRUPOS[grupo_sel], asset, ANO_BASE, ano_sel, mes_num, nf)
+                tuple(GRUPOS[grupo_sel]), asset, ANO_BASE, ano_sel, mes_num, nf)
             prog.progress(100, text="Concluido!")
         st.session_state["df_todos"] = df_todos_calc
         prog.empty()
