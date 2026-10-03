@@ -166,47 +166,34 @@ if 'cache_pre_aquecido' not in st.session_state:
 
 # Alerta de temperatura em background — nao bloqueia o app
 def _disparar_alerta_background(secrets, current_year, current_month, current_day, MESES):
-    """Roda em thread separada — nao impacta velocidade do dashboard."""
+    """
+    Roda em thread separada — compara MOD11A1 diario
+    dia mais recente vs dia anterior para todos os lagos.
+    Nao impacta velocidade do dashboard.
+    """
     import threading
     def _verificar():
         try:
-            from utils.gee_loader import get_csv_cache
+            from utils.gee_loader import get_daily_temp_all_lakes
             from utils.alertas import verificar_e_enviar_alerta
             import pandas as pd
-            df_cache = get_csv_cache()
-            if df_cache is None:
+
+            # Busca temperatura diaria de todos os lagos em batch
+            ASSET = 'projects/ee-researches-457119/assets/wwf_botos/lagos_amazonicos'
+            df_diario = get_daily_temp_all_lakes(ASSET, 'name')
+            if df_diario is None or df_diario.empty:
                 return
-            mes_ant = current_month - 1 if current_month > 1 else 12
-            ano_ant = current_year if current_month > 1 else current_year - 1
-            registros_cur, registros_ant = [], []
-            for lago_nome in df_cache['lago'].unique():
-                t_cur = df_cache[
-                    (df_cache['lago']==lago_nome) &
-                    (df_cache['ano']==current_year) &
-                    (df_cache['mes']==current_month)
-                ]['temperatura'].values
-                t_ant = df_cache[
-                    (df_cache['lago']==lago_nome) &
-                    (df_cache['ano']==ano_ant) &
-                    (df_cache['mes']==mes_ant)
-                ]['temperatura'].values
-                if len(t_cur) > 0 and t_cur[0]:
-                    registros_cur.append({'lago': lago_nome,
-                        'temperatura': float(t_cur[0]),
-                        'data': f'{current_day:02d}/{MESES[current_month-1]}/{current_year}'})
-                if len(t_ant) > 0 and t_ant[0]:
-                    registros_ant.append({'lago': lago_nome,
-                        'temperatura': float(t_ant[0]),
-                        'data': f'{mes_ant:02d}/{ano_ant}'})
-            if registros_cur and registros_ant:
-                verificar_e_enviar_alerta(
-                    secrets,
-                    pd.DataFrame(registros_cur),
-                    pd.DataFrame(registros_ant),
-                    limiar=0.5
-                )
-        except:
-            pass
+
+            # Monta DataFrames no formato esperado pelo verificar_e_enviar_alerta
+            df_hoje  = df_diario[['lago','temp_hoje','data_hoje']].rename(
+                columns={'temp_hoje':'temperatura','data_hoje':'data'})
+            df_ontem = df_diario[['lago','temp_ontem','data_ontem']].rename(
+                columns={'temp_ontem':'temperatura','data_ontem':'data'})
+
+            verificar_e_enviar_alerta(
+                secrets, df_hoje, df_ontem, limiar=0.5)
+        except Exception as e:
+            print(f'Erro no alerta background: {e}')
     t = threading.Thread(target=_verificar, daemon=True)
     t.start()
 # ── HEADER ────────────────────────────────────────────────────
