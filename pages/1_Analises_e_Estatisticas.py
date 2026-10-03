@@ -114,7 +114,7 @@ def iniciar_gee():
 
 iniciar_gee()
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=604800)  # 7 dias
 def obter_data():
     return get_latest_date()
 
@@ -220,14 +220,19 @@ def load_stats(lago, nf, asset, sy, sm):
 
 @st.cache_data(ttl=86400)  # 24h — dados do CSV nao mudam
 def load_focos(lago, sy, sm, dyn):
-    geom_src = None
-    if dyn:
-        try:
-            feat = get_feature(lago, ASSETS["tocantins"], "Name")
-            geom_src = feat.geometry()
-        except: pass
-    f5  = get_focos_count_periodo(lago, ASSETS["buffers"], 5000,  sy, sm, dynamic=dyn, geom_src=geom_src)
-    f10 = get_focos_count_periodo(lago, ASSETS["buffers"], 10000, sy, sm, dynamic=dyn, geom_src=geom_src)
+    # CSV primeiro, GEE como fallback
+    from utils.gee_loader import get_focos_from_csv
+    f5  = get_focos_from_csv(lago, 5,  sy, sm)
+    f10 = get_focos_from_csv(lago, 10, sy, sm)
+    if f5 is None or f10 is None:
+        geom_src = None
+        if dyn:
+            try:
+                feat = get_feature(lago, ASSETS["tocantins"], "Name")
+                geom_src = feat.geometry()
+            except: pass
+        if f5  is None: f5  = get_focos_count_periodo(lago, ASSETS["buffers"], 5000,  sy, sm, dynamic=dyn, geom_src=geom_src)
+        if f10 is None: f10 = get_focos_count_periodo(lago, ASSETS["buffers"], 10000, sy, sm, dynamic=dyn, geom_src=geom_src)
     return f5, f10
 
 @st.cache_data(ttl=86400)  # 24h — comparativo do CSV nao muda
