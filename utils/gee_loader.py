@@ -1,5 +1,25 @@
 import ee
 
+def _mes_tem_dado_gee(year, month):
+    """
+    Verifica rapidamente se um mes/ano tem dado no MOD11A1.
+    Evita timeout tentando buscar meses sem dado disponivel.
+    """
+    from datetime import datetime as _dt
+    _now = _dt.utcnow()
+    # Mes atual ou futuro: verifica se ja tem dado no GEE
+    # MOD11A1 tem atraso de 2-5 dias
+    # Se estamos no mes X e faltam menos de 5 dias, provavelmente nao tem
+    if year > _now.year:
+        return False
+    if year == _now.year and month > _now.month:
+        return False
+    if year == _now.year and month == _now.month:
+        # Verifica se ja passou dos primeiros 5 dias do mes
+        return _now.day > 5
+    return True  # Meses anteriores sempre tem dado
+
+
 import os
 import glob
 
@@ -517,7 +537,8 @@ def get_all_lakes_temp_acumulado(lagos, asset_id, ano_base,
         lim = ref_month if year == ref_year else 12
         for month in range(1, lim + 1):
             val_teste = get_temp_from_csv(lagos[0], year, month) if lagos else None
-            if val_teste is None:
+            # So vai ao GEE se nao tem no CSV E tem dado disponivel
+            if val_teste is None and _mes_tem_dado_gee(year, month):
                 meses_sem_csv.append((year, month))
 
     # Busca via GEE em batch para meses sem CSV
@@ -701,8 +722,8 @@ def get_monthly_temperature_hybrid(lake_name, asset_id, ano_base,
             # 1. Tenta CSV primeiro
             val = get_temp_from_csv(lake_name, year, month)
 
-            # 2. Se nao tem no CSV vai ao GEE
-            if val is None:
+            # 2. Se nao tem no CSV vai ao GEE — mas so se tiver dado disponivel
+            if val is None and _mes_tem_dado_gee(year, month):
                 try:
                     col = (ee.ImageCollection(colecao)
                            .filterDate(start, end)
