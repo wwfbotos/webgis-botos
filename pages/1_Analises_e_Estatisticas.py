@@ -134,6 +134,35 @@ tocantins_disp    = obter_display_map()
 toc_display_names = sorted([n.replace("\xa0"," ").strip() for n in tocantins_names if n])
 GRUPOS["Tocantins-Araguaia"] = toc_display_names
 
+
+# Pre-aquece cache para todos os lagos ao iniciar
+@st.cache_data(ttl=3600)
+def pre_aquecer_cache(cy, cm):
+    """Carrega dados de todos os lagos de uma vez ao iniciar o app."""
+    from utils.gee_loader import get_csv_cache
+    df = get_csv_cache()
+    if df is None:
+        return {}
+    resultado = {}
+    todos_lagos = list(df['lago'].unique())
+    for lago_nome in todos_lagos:
+        # Serie temporal
+        dados = {}
+        for year in [2023, cy-1, cy]:
+            for month in range(1, 13):
+                if year == cy and month > cm:
+                    continue
+                from utils.gee_loader import get_temp_from_csv, get_focos_from_csv
+                dados[f'{lago_nome}_{year}_{month}_temp'] = get_temp_from_csv(lago_nome, year, month)
+                dados[f'{lago_nome}_{year}_{month}_f5']   = get_focos_from_csv(lago_nome, 5, year, month)
+                dados[f'{lago_nome}_{year}_{month}_f10']  = get_focos_from_csv(lago_nome, 10, year, month)
+        resultado[lago_nome] = dados
+    return resultado
+
+# Roda pre-aquecimento em background
+if 'cache_pre_aquecido' not in st.session_state:
+    pre_aquecer_cache(current_year, current_month)
+    st.session_state['cache_pre_aquecido'] = True
 # ── HEADER ────────────────────────────────────────────────────
 logo_html = f'<img src="{LOGO_WWF}" style="height:48px;margin-right:14px">' if LOGO_WWF else ""
 # Header sera renderizado APOS carregar os dados do lago
@@ -168,16 +197,16 @@ with st.sidebar:
     </div>""", unsafe_allow_html=True)
 
 # ── CARREGA DADOS DO LAGO SELECIONADO ─────────────────────────
-@st.cache_resource
+@st.cache_data(ttl=3600)
 def load_serie(lago, nf, asset, cy, cm):
     # Hibrido: MOD11A2 para historico, MOD11A1 para mes atual
     return get_monthly_temperature_hybrid(lago, asset, ANO_BASE, cy, cm, nf)
 
-@st.cache_resource
+@st.cache_data(ttl=3600)
 def load_stats(lago, nf, asset, sy, sm):
     return get_temp_stats(lago, asset, sy, sm, nf)
 
-@st.cache_resource
+@st.cache_data(ttl=3600)
 def load_focos(lago, sy, sm, dyn):
     # CSV primeiro, GEE como fallback
     from utils.gee_loader import get_focos_from_csv
@@ -194,7 +223,7 @@ def load_focos(lago, sy, sm, dyn):
         if f10 is None: f10 = get_focos_count_periodo(lago, ASSETS["buffers"], 10000, sy, sm, dynamic=dyn, geom_src=geom_src)
     return f5, f10
 
-@st.cache_resource
+@st.cache_data(ttl=3600)
 def load_all_lakes(lagos, asset, ano_base, cy, cm, nf):
     return get_all_lakes_temp_acumulado(lagos, asset, ano_base, cy, cm, nf)
 
@@ -208,7 +237,7 @@ def load_diario(lago, nf, asset, cy, cm):
     # Temperatura diaria do mes atual (MOD11A1) — cache de 30min
     return get_daily_temperature_current_month(lago, asset, cy, cm, nf)
 
-@st.cache_resource
+@st.cache_data(ttl=3600)
 def load_focos_serie(lago, cy, cm, dyn):
     geom_src = None
     if dyn:
