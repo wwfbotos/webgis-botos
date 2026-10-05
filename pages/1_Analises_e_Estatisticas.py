@@ -6,7 +6,6 @@ import folium
 from streamlit_folium import st_folium
 import ee
 from config import (GRUPOS, ASSETS, ANO_BASE, LOGO_WWF, CORES)
-from utils.alertas import verificar_e_enviar_alerta
 from utils.gee_loader import (
     init_gee, get_latest_date, get_tocantins_names,
     get_tocantins_display_names, get_monthly_temperature,
@@ -134,24 +133,6 @@ toc_display_names = sorted([n.replace("\xa0"," ").strip() for n in tocantins_nam
 GRUPOS["Tocantins-Araguaia"] = toc_display_names
 
 
-def _disparar_alerta_background(secrets, current_year, current_month, current_day, MESES):
-    import threading
-    def _verificar():
-        try:
-            from utils.gee_loader import get_daily_temp_all_lakes
-            import pandas as pd
-            ASSET = 'projects/ee-researches-457119/assets/wwf_botos/lagos_amazonicos'
-            df_diario = get_daily_temp_all_lakes(ASSET, 'name')
-            if df_diario is None or df_diario.empty:
-                return
-            df_hoje  = df_diario[['lago','temp_hoje','data_hoje']].rename(
-                columns={'temp_hoje':'temperatura','data_hoje':'data'})
-            df_ontem = df_diario[['lago','temp_ontem','data_ontem']].rename(
-                columns={'temp_ontem':'temperatura','data_ontem':'data'})
-            verificar_e_enviar_alerta(secrets, df_hoje, df_ontem, limiar=0.5)
-        except Exception as e:
-            print(f'Erro alerta: {e}')
-    threading.Thread(target=_verificar, daemon=True).start()
 # ── HEADER ────────────────────────────────────────────────────
 logo_html = f'<img src="{LOGO_WWF}" style="height:48px;margin-right:14px">' if LOGO_WWF else ""
 # Header sera renderizado APOS carregar os dados do lago
@@ -241,12 +222,6 @@ with st.spinner("Carregando dados..."):
     df_f5, df_f10  = load_focos_serie(lago_sel, current_year, current_month, is_toc)
     df_diario     = load_diario(lago_sel, nf, asset, current_year, current_month)
     t_dia, data_dia = load_temp_dia(lago_sel, nf, asset)
-    # Dispara alerta uma vez por dia
-    _chave = f'alerta_{current_year}_{current_month}_{current_day}'
-    if _chave not in st.session_state:
-        _disparar_alerta_background(
-            st.secrets, current_year, current_month, current_day, MESES)
-        st.session_state[_chave] = True
 
 
 # Renderiza header com data correta do lago selecionado
