@@ -1,0 +1,34 @@
+name: Alerta Diario de Temperatura — Botos WWF
+
+on:
+  schedule:
+    # Roda todo dia as 11h UTC (8h Brasilia)
+    - cron: '0 11 * * *'
+  workflow_dispatch:  # Permite rodar manualmente pelo GitHub
+
+jobs:
+  alerta:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do repositorio
+        uses: actions/checkout@v4
+
+      - name: Configura Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instala dependencias
+        run: |
+          pip install earthengine-api pandas
+
+      - name: Roda o alerta
+        env:
+          GEE_SERVICE_ACCOUNT: ${{ secrets.GEE_SERVICE_ACCOUNT }}
+          GEE_PRIVATE_KEY: ${{ secrets.GEE_PRIVATE_KEY }}
+          EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
+          EMAIL_SENHA_APP: ${{ secrets.EMAIL_SENHA_APP }}
+          EMAIL_DESTINATARIO: ${{ secrets.EMAIL_DESTINATARIO }}
+        run: |
+          python scripts/alerta_diario.py
