@@ -703,3 +703,81 @@ def get_monthly_temperature_hybrid(lake_name, asset_id, ano_base,
                 "produto": produto
             })
     return pd.DataFrame(records)
+
+def get_daily_temp_all_lakes(asset_id, name_field="name"):
+    """
+    Busca temperatura do dia mais recente e anterior
+    para TODOS os lagos em batch. Retorna DataFrame com:
+    lago, temp_hoje, data_hoje, temp_ontem, data_ontem, diferenca
+    """
+    from datetime import datetime as _dt, timedelta
+    now = _dt.utcnow()
+    start_ee = ee.Date((now - timedelta(days=15)).strftime("%Y-%m-%d"))
+    end_ee   = ee.Date(now.strftime("%Y-%m-%d"))
+
+    fc = ee.FeatureCollection(asset_id)
+
+    col = (ee.ImageCollection("MODIS/061/MOD11A1")
+           .filterDate(start_ee, end_ee)
+           .map(modis_temperature)
+           .select("surface_temperature")
+           .sort("system:time_start", False))
+
+    try:
+        datas = col.limit(10).aggregate_array("system:time_start").getInfo()
+        if not datas or len(datas) < 2:
+            return None
+
+        records = []
+        for ts in datas[:6]:
+            dt_str = _dt.utcfromtimestamp(ts/1000).strftime("%Y-%m-%d")
+            start_d = dt_str
+            end_d   = ee.Date(dt_str).advance(1, "day").format("YYYY-MM-dd").getInfo()
+            img = col.filterDate(start_d, end_d).first()
+
+            def reduce_lago(feat):
+                val = img.reduceRegion(
+                    reducer=ee.Reducer.mean(),
+                    geometry=feat.geometry(),
+                    scale=1000, maxPixels=1e13
+                ).get("surface_temperature")
+                return feat.set("temp_val", val)
+
+            result = fc.map(reduce_lago)
+            nomes  = result.aggregate_array(name_field).getInfo()
+            temps  = result.aggregate_array("temp_val").getInfo()
+
+            for nome, temp in zip(nomes, temps):
+                if temp is not None:
+                    records.append({
+                        "lago": nome,
+                        "temp": round(temp, 2),
+                        "data": dt_str,
+                        "ts":   ts
+                    })
+
+        if not records:
+            return None
+
+        df_all = pd.DataFrame(records)
+        rows = []
+        for lago in df_all["lago"].unique():
+            df_lago = df_all[df_all["lago"]==lago].sort_values("ts", ascending=False)
+            if len(df_lago) >= 2:
+                hoje  = df_lago.iloc[0]
+                ontem = df_lago.iloc[1]
+                rows.append({
+                    "lago":       lago,
+                    "temp_hoje":  hoje["temp"],
+                    "data_hoje":  hoje["data"],
+                    "temp_ontem": ontem["temp"],
+                    "data_ontem": ontem["data"],
+                    "diferenca":  round(hoje["temp"] - ontem["temp"], 2)
+                })
+
+        return pd.DataFrame(rows) if rows else None
+
+    except Exception as e:
+        print(f"Erro get_daily_temp_all_lakes: {e}")
+        return None
+
