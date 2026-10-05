@@ -1,4 +1,85 @@
 import ee
+
+def _mes_tem_dado_gee(year, month):
+    from datetime import datetime as _dt
+    _now = _dt.utcnow()
+    if year > _now.year:
+        return False
+    if year == _now.year and month > _now.month:
+        return False
+    if year == _now.year and month == _now.month:
+        return _now.day > 5
+    return True
+
+
+import os
+import glob
+
+def _load_csv_cache():
+    import pandas as pd
+    pasta = os.path.join(os.path.dirname(__file__), '..', 'data')
+    arquivos = glob.glob(os.path.join(pasta, 'botos_dados_*.csv'))
+    if not arquivos:
+        return None
+    dfs = []
+    for arq in arquivos:
+        try:
+            df = pd.read_csv(arq)
+            dfs.append(df)
+        except:
+            pass
+    if not dfs:
+        return None
+    df_all = pd.concat(dfs, ignore_index=True)
+    df_all.loc[df_all['temperatura'] == -9999, 'temperatura'] = None
+    return df_all
+
+_CSV_CACHE = None
+
+def get_csv_cache():
+    global _CSV_CACHE
+    if _CSV_CACHE is None:
+        _CSV_CACHE = _load_csv_cache()
+        if _CSV_CACHE is not None:
+            print(f'CSV carregado: {len(_CSV_CACHE)} registros')
+    return _CSV_CACHE
+
+def get_temp_from_csv(lago, year, month):
+    df = get_csv_cache()
+    if df is None:
+        return None
+    mask = (df['lago']==lago) & (df['ano']==year) & (df['mes']==month)
+    rows = df[mask]
+    if rows.empty:
+        return None
+    val = rows['temperatura'].values[0]
+    return float(val) if val is not None and str(val) != 'nan' else None
+
+def get_focos_from_csv(lago, dist_km, year, month):
+    df = get_csv_cache()
+    if df is None:
+        return None
+    col_focos = f'focos_{dist_km}km'
+    if col_focos not in df.columns:
+        return None
+    mask = (df['lago']==lago) & (df['ano']==year) & (df['mes']==month)
+    rows = df[mask]
+    if rows.empty:
+        return None
+    val = rows[col_focos].values[0]
+    return int(val) if val is not None and str(val) != 'nan' else None
+
+def get_centroid_from_csv(lago):
+    df = get_csv_cache()
+    if df is None:
+        return None, None
+    rows = df[df['lago'] == lago]
+    if rows.empty:
+        return None, None
+    lon = rows['lon'].values[0]
+    lat = rows['lat'].values[0]
+    return float(lon), float(lat)
+
 import pandas as pd
 import streamlit as st
 import time as time_module
@@ -368,6 +449,9 @@ def get_monthly_focos(name, buffer_asset, dist_m, ano_base, ref_year, ref_month,
             val = get_focos_count_periodo(
                 name, buffer_asset, dist_m, year, month,
                 name_field=name_field, dynamic=dynamic, geom_src=geom_src)
+            val_csv = get_focos_from_csv(name, dist_m // 1000, year, month)
+            if val_csv is not None:
+                val = val_csv
             records.append({"ano": year, "mes": month, "focos": val})
     return pd.DataFrame(records)
 
@@ -411,111 +495,84 @@ def get_ranking_focos_periodo(lagos, buffer_asset, year, month,
 
 
 
-def get_all_lakes_temp_acumulado(lagos, asset_id, ano_base, ref_year, ref_month, name_field="name"):
-    """
-    Versao otimizada: usa ee.FeatureCollection.reduceColumns em batch.
-    Uma unica chamada GEE por mes/ano em vez de uma por lago.
-    Para 24 lagos x 8 meses x 3 anos = 576 chamadas -> ~24 chamadas.
-    """
-    import time
-
-    fc = ee.FeatureCollection(asset_id)
-
-    def mean_temp_all_lakes(year, month):
-        """Retorna dict {name -> temp_media} para todos os lagos num mes/ano."""
-        start = f"{year}-{month:02d}-01"
-        nm = month % 12 + 1
-        ny = year + 1 if month == 12 else year
-        end = f"{ny}-{nm:02d}-01"
-        col = (ee.ImageCollection("MODIS/061/MOD11A2")
-               .filterDate(start, end)
-               .map(modis_temperature)
-               .select("surface_temperature")
-               .mean())
-        # Reduz sobre todos os lagos de uma vez
-        def reduce_lake(feat):
-            val = col.reduceRegion(
-                reducer=ee.Reducer.mean(),
-                geometry=feat.geometry(),
-                scale=1000, maxPixels=1e13
-            ).get("surface_temperature")
-            return feat.set("temp", val)
-        result = fc.map(reduce_lake)
-        names = result.aggregate_array(name_field).getInfo()
-        temps = result.aggregate_array("temp").getInfo()
-        return dict(zip(names, temps))
-
-    # Busca centroides de todos os lagos de uma vez
-    def get_centroids():
-        def add_centroid(feat):
-            c = feat.geometry().centroid()
-            coords = c.coordinates()
-            return feat.set("cx", coords.get(0)).set("cy", coords.get(1))
-        result = fc.map(add_centroid)
-        names = result.aggregate_array(name_field).getInfo()
-        cxs   = result.aggregate_array("cx").getInfo()
-        cys   = result.aggregate_array("cy").getInfo()
-        return {n: [cx, cy] for n, cx, cy in zip(names, cxs, cys)}
-
-    centroids = get_centroids()
-
-    # Coleta temperaturas para cada mes/ano em batch
-    # anos: ano_base, ref_year-1, ref_year
+def get_all_lakes_temp_acumulado(lagos, asset_id, ano_base,
+                                  ref_year, ref_month, name_field="name"):
+    from datetime import datetime as _dt
+    _now = _dt.utcnow()
+    _cy, _cm = _now.year, _now.month
     anos = sorted(set([ano_base, ref_year - 1, ref_year]))
     if ref_year - 1 == ano_base:
         anos = [ano_base, ref_year]
-
-    temps = {}  # {(year, month): {name: temp}}
+    meses_sem_csv = []
     for year in anos:
         lim = ref_month if year == ref_year else 12
         for month in range(1, lim + 1):
+            val_teste = get_temp_from_csv(lagos[0], year, month) if lagos else None
+            if val_teste is None and _mes_tem_dado_gee(year, month):
+                meses_sem_csv.append((year, month))
+    temps_gee = {}
+    if meses_sem_csv:
+        fc = ee.FeatureCollection(asset_id)
+        for year, month in meses_sem_csv:
             try:
-                temps[(year, month)] = mean_temp_all_lakes(year, month)
+                start = f"{year}-{month:02d}-01"
+                nm = month % 12 + 1
+                ny = year + 1 if month == 12 else year
+                end = f"{ny}-{nm:02d}-01"
+                is_cur = (year == _cy and month == _cm)
+                colecao = "MODIS/061/MOD11A1" if is_cur else "MODIS/061/MOD11A2"
+                img = (ee.ImageCollection(colecao)
+                       .filterDate(start, end)
+                       .map(modis_temperature)
+                       .select("surface_temperature").mean())
+                def reduce_lake_inner(feat):
+                    val = img.reduceRegion(
+                        reducer=ee.Reducer.mean(),
+                        geometry=feat.geometry(),
+                        scale=1000, maxPixels=1e13
+                    ).get("surface_temperature")
+                    return feat.set("temp_val", val)
+                result = fc.map(reduce_lake_inner)
+                nomes  = result.aggregate_array(name_field).getInfo()
+                temps  = result.aggregate_array("temp_val").getInfo()
+                temps_gee[(year, month)] = dict(zip(nomes, temps))
             except:
-                temps[(year, month)] = {}
-
-    # Monta DataFrame com diferencas acumuladas
+                temps_gee[(year, month)] = {}
+    def get_t(lago, year, month):
+        val = get_temp_from_csv(lago, year, month)
+        if val is not None:
+            return val
+        raw = temps_gee.get((year, month), {}).get(lago)
+        return round(raw, 2) if raw else None
     rows = []
-    for name in lagos:
+    for lago in lagos:
         dif_base_total = 0.0
         dif_avg_total  = 0.0
-        lim = ref_month
-
-        for month in range(1, lim + 1):
-            t_cur  = temps.get((ref_year, month), {}).get(name)
-            t_base = temps.get((ano_base,  month), {}).get(name)
-
-            # Media historica: media de todos os anos anteriores ao ref_year
-            hist_vals = [
-                temps.get((y, month), {}).get(name)
-                for y in anos if y < ref_year
-            ]
-            hist_vals = [v for v in hist_vals if v]
-            t_avg = sum(hist_vals) / len(hist_vals) if hist_vals else None
-
+        for month in range(1, ref_month + 1):
+            t_cur  = get_t(lago, ref_year, month)
+            t_base = get_t(lago, ano_base, month)
+            hist   = [get_t(lago, y, month) for y in anos if y < ref_year]
+            hist   = [v for v in hist if v]
+            t_avg  = round(sum(hist)/len(hist), 2) if hist else None
             if t_cur and t_base:
                 dif_base_total += round(t_cur - t_base, 2)
             if t_cur and t_avg:
                 dif_avg_total  += round(t_cur - t_avg, 2)
-
-        # Centroide
-        coord = centroids.get(name)
+        lon, lat = get_centroid_from_csv(lago)
+        if lon is None:
+            try:
+                feat = get_feature(lago, asset_id, name_field)
+                coord = feat.geometry().centroid().getInfo()["coordinates"]
+                lon, lat = coord[0], coord[1]
+            except:
+                lon, lat = None, None
         rows.append({
-            "Lago":     name,
+            "Lago":     lago,
             "dif_base": round(dif_base_total, 1),
             "dif_avg":  round(dif_avg_total,  1),
-            "centroid": coord,
+            "centroid": [lon, lat] if lon else None,
         })
-
     return pd.DataFrame(rows)
-
-# ─────────────────────────────────────────────────────────────────
-# ESTRATEGIA DE PRODUTO MODIS:
-# - Mes atual:       MOD11A1 (diario)  → dado mais recente possivel
-# - Meses anteriores: MOD11A2 (8 dias) → serie historica consistente
-# As duas series NAO sao misturadas na mesma comparacao numerica.
-# O mes atual aparece destacado nos graficos como "dado preliminar".
-# ─────────────────────────────────────────────────────────────────
 
 def get_modis_daily_tile(lake_name, asset_id, year, month, name_field="name"):
     """
@@ -622,7 +679,9 @@ def get_monthly_temperature_hybrid(lake_name, asset_id, ano_base,
             ny = year + 1 if month == 12 else year
             end = f"{ny}-{nm:02d}-01"
 
-            try:
+            val = get_temp_from_csv(lake_name, year, month)
+            if val is None and _mes_tem_dado_gee(year, month):
+                try:
                 col = (ee.ImageCollection(colecao)
                        .filterDate(start, end)
                        .filterBounds(geom_safe.bounds())
