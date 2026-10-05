@@ -682,25 +682,24 @@ def get_monthly_temperature_hybrid(lake_name, asset_id, ano_base,
             val = get_temp_from_csv(lake_name, year, month)
             if val is None and _mes_tem_dado_gee(year, month):
                 try:
-                col = (ee.ImageCollection(colecao)
-                       .filterDate(start, end)
-                       .filterBounds(geom_safe.bounds())
-                       .map(modis_temperature)
-                       .select("surface_temperature")
-                       .mean())
-                val = col.reduceRegion(
-                    reducer=ee.Reducer.mean(),
-                    geometry=geom_safe,
-                    scale=1000, maxPixels=1e13
-                ).get("surface_temperature").getInfo()
-                records.append({
-                    "ano": year, "mes": month,
-                    "temperatura": round(val, 2) if val else None,
-                    "produto": produto
-                })
-            except:
-                records.append({
-                    "ano": year, "mes": month,
-                    "temperatura": None, "produto": produto
-                })
+                    col = (ee.ImageCollection(colecao)
+                           .filterDate(start, end)
+                           .filterBounds(geom_safe.bounds())
+                           .map(modis_temperature)
+                           .select("surface_temperature")
+                           .mean())
+                    val = col.reduceRegion(
+                        reducer=ee.Reducer.mean(),
+                        geometry=geom_safe,
+                        scale=1000, maxPixels=1e13
+                    ).get("surface_temperature").getInfo()
+                    val = round(val, 2) if val else None
+                except:
+                    val = None
+
+            records.append({
+                "ano": year, "mes": month,
+                "temperatura": val,
+                "produto": produto
+            })
     return pd.DataFrame(records)
