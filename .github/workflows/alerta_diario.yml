@@ -21,7 +21,7 @@ jobs:
 
       - name: Instala dependencias
         run: |
-          pip install earthengine-api pandas
+          pip install earthengine-api pandas streamlit folium plotly
 
       - name: Roda o alerta
         env:
