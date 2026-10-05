@@ -395,8 +395,17 @@ def get_temp_stats(name, asset_id, sel_year, sel_month, name_field="name"):
         except:
             return None
 
-    # Para o mes atual: pega o dia mais recente do MOD11A1
-    if sel_year == _cy and sel_month == _cm:
+    # Para o mes atual OU ultimo mes com dado: usa dia mais recente do MOD11A1
+    # Detecta automaticamente o ultimo mes disponivel via CSV
+    from utils.gee_loader import get_csv_cache as _gcc
+    _df = _gcc()
+    if _df is not None and not _df.empty:
+        _ult = _df.dropna(subset=['temperatura']).sort_values(
+            ['ano','mes'], ascending=False).iloc[0]
+        _ult_year, _ult_month = int(_ult['ano']), int(_ult['mes'])
+    else:
+        _ult_year, _ult_month = _cy, _cm
+    if sel_year == _ult_year and sel_month == _ult_month:
         t_atual, _ = get_temp_latest_day(name, asset_id, name_field)
     else:
         # Para meses anteriores: media mensal MOD11A2
